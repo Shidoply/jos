@@ -107,16 +107,22 @@ boot_alloc(uint32_t n)
 	// to a multiple of PGSIZE.
 	//
 	// LAB 2: Your code here.
-	//Tarea: boot_alloc
-	if (n > 1048576){
+	// Tarea: boot_alloc
+	// Last position of free memory (to check for memory alloc)
+	static char *lastfree;
+	if(!lastfree){
+		lastfree = nextfree + npages * PGSIZE;
+	}
+	// Retain current position to return
+	char* currfree = nextfree;
+	// Calculate next position
+	nextfree = ROUNDUP(nextfree + n, PGSIZE);
+	// If position is larger than total memory then panic
+	if(nextfree > lastfree){
 		panic("boot_alloc: No hay suficiente memoria \n");
 	}
-	if (n == 0){
-		return nextfree;
-	}
-	
-
-
+	// Return start of array pointer
+	return currfree;
 }
 
 // Set up a two-level page table:
@@ -138,7 +144,7 @@ mem_init(void)
 	i386_detect_memory();
 
 	// Remove this line when you're ready to test this function.
-	panic("mem_init: This function is not finished\n");
+	// panic("mem_init: This function is not finished\n");
 
 	//////////////////////////////////////////////////////////////////////
 	// create initial page directory.
@@ -163,9 +169,10 @@ mem_init(void)
 	// memset
 	// to initialize all fields of each struct PageInfo to 0.
 	// Your code goes here:
-	//Tarea:mem_init_pages
-	struct PageInfo *pages = (struct PageInfo *) boot_alloc(PGSIZE);
-	memset(pages, 0, PGSIZE);
+	// Tarea: mem_init_pages
+	int pageInfoSize = sizeof(struct PageInfo);
+	pages = (struct PageInfo *) boot_alloc(npages * pageInfoSize);
+	memset(pages, 0, npages * pageInfoSize);
 
 	//////////////////////////////////////////////////////////////////////
 	// Now that we've allocated the initial kernel data structures, we set
@@ -176,6 +183,7 @@ mem_init(void)
 	page_init();
 
 	check_page_free_list(1);
+
 	check_page_alloc();
 	check_page();
 
@@ -268,8 +276,32 @@ page_init(void)
 	// Change the code to reflect this.
 	// NB: DO NOT actually touch the physical memory corresponding to
 	// free pages!
+	// Page 0 in use
+	pages[0].pp_ref = 1;
+	pages[0].pp_link = NULL;
+	// The rest of the base memory is free
 	size_t i;
-	for (i = 0; i < npages; i++) {
+	for (i = 1; i < npages_basemem; i++) {
+		pages[i].pp_ref = 0;
+		pages[i].pp_link = page_free_list;
+		page_free_list = &pages[i];
+	}
+	// IO hole (don't allocate)
+	i += (EXTPHYSMEM - IOPHYSMEM) / PGSIZE;
+	// Extended memory: Kernel Allocated pages
+	size_t kernel_space =  i + ((int) kern_pgdir - (KERNBASE + EXTPHYSMEM)) / PGSIZE;
+	for(; i < kernel_space; i++){
+		pages[i].pp_ref = 1;
+		pages[i].pp_link = NULL;
+	}
+	// Extended memory: Allocated by boot_alloc
+	size_t boot_space = i + ((int) boot_alloc(0) - (int) kern_pgdir) / PGSIZE;
+	for(; i < boot_space; i++){
+		pages[i].pp_ref = 1;
+		pages[i].pp_link = NULL;
+	}
+	// Extended Memory: Free pages
+	for(; i < npages; i++){
 		pages[i].pp_ref = 0;
 		pages[i].pp_link = page_free_list;
 		page_free_list = &pages[i];
@@ -489,6 +521,7 @@ check_page_free_list(bool only_low_memory)
 
 	first_free_page = (char *) boot_alloc(0);
 	for (pp = page_free_list; pp; pp = pp->pp_link) {
+
 		// check that we didn't corrupt the free list itself
 		assert(pp >= pages);
 		assert(pp < pages + npages);
@@ -510,6 +543,7 @@ check_page_free_list(bool only_low_memory)
 
 	assert(nfree_basemem > 0);
 	assert(nfree_extmem > 0);
+
 }
 
 //
